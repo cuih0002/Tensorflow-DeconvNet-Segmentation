@@ -1,41 +1,29 @@
+#coding=utf-8
 import os
 import random
 import tensorflow as tf
 import wget
 import tarfile
 import numpy as np
-import argparse
 
 import time
 from datetime import datetime
+from preprocess.data_encoder_decoeder import get_batch,decode_from_tfrecords,encode_to_tfrecords
 
 class DeconvNet:
     def __init__(self, images, segmentations, use_cpu=False, checkpoint_dir='./checkpoints/'):
         #self.maybe_download_and_extract()
         
-        self.x = images
+        self.x = images/255.-0.5
         self.y = segmentations
-        self.build(use_cpu=use_cpu)
+        self.build()
 
         self.saver = tf.train.Saver(max_to_keep = 5, keep_checkpoint_every_n_hours =1)
         self.checkpoint_dir = checkpoint_dir
         #self.rate=lr
         #start=time.time()
 
-    def maybe_download_and_extract(self):
-        """Download and unpack VOC data if data folder only contains the .gitignore file"""
-        if os.listdir('data') == ['.gitignore']:
-            filenames = ['VOC_OBJECT.tar.gz', 'VOC2012_SEG_AUG.tar.gz', 'stage_1_train_imgset.tar.gz', 'stage_2_train_imgset.tar.gz']
-            url = 'http://cvlab.postech.ac.kr/research/deconvnet/data/'
 
-            for filename in filenames:
-                wget.download(url + filename, out=os.path.join('data', filename))
-
-                tar = tarfile.open(os.path.join('data', filename))
-                tar.extractall(path='data')
-                tar.close()
-
-                os.remove(os.path.join('data', filename))
 
     def restore_session():
         global_step = 0
@@ -56,7 +44,7 @@ class DeconvNet:
         restore_session()
         return self.prediction.eval(session=self.session, feed_dict={image: [image]})[0]
 
-    def build(self, use_cpu=False):
+    def build(self):
         '''
         use_cpu allows you to test or train the network even with low GPU memory
         anyway: currently there is no tensorflow CPU support for unpooling respectively
@@ -64,81 +52,74 @@ class DeconvNet:
         and prediction
         '''
 
-        if use_cpu:
-            device = '/cpu:0'
-        else:
-            device = '/gpu:0'
+        # Don't need placeholders when prefetching TFRecords
+        #sef.x = tf.placeholder(tf.float32, shape=(None, None, None, 3), name='x_data')
+        #self.y = tf.placeholder(tf.int64, shape=(None, None, None), name='y_data')
 
+        conv_1_1 = self.conv_layer(self.x, [3, 3, 1, 64], 64, 'conv_1_1')
+        #conv_1_2 = self.conv_layer(conv_1_1, [3, 3, 64, 64], 64, 'conv_1_2')
 
-        with tf.device(device):
-            # Don't need placeholders when prefetching TFRecords
-            #self.x = tf.placeholder(tf.float32, shape=(None, None, None, 3), name='x_data')
-            #self.y = tf.placeholder(tf.int64, shape=(None, None, None), name='y_data')
+        pool_1, pool_1_argmax = self.pool_layer(conv_1_1)
 
-            conv_1_1 = self.conv_layer(self.x, [3, 3, 3, 64], 64, 'conv_1_1')
-            conv_1_2 = self.conv_layer(conv_1_1, [3, 3, 64, 64], 64, 'conv_1_2')
+        conv_2_1 = self.conv_layer(pool_1, [3, 3, 64, 128], 128, 'conv_2_1')
+        #conv_2_2 = self.conv_layer(conv_2_1, [3, 3, 128, 128], 128, 'conv_2_2')
 
-            pool_1, pool_1_argmax = self.pool_layer(conv_1_2)
+        pool_2, pool_2_argmax = self.pool_layer(conv_2_1)
 
-            conv_2_1 = self.conv_layer(pool_1, [3, 3, 64, 128], 128, 'conv_2_1')
-            conv_2_2 = self.conv_layer(conv_2_1, [3, 3, 128, 128], 128, 'conv_2_2')
+        conv_3_1 = self.conv_layer(pool_2, [3, 3, 128, 256], 256, 'conv_3_1')
+        #conv_3_2 = self.conv_layer(conv_3_1, [3, 3, 256, 256], 256, 'conv_3_2')
+        #conv_3_3 = self.conv_layer(conv_3_2, [3, 3, 256, 256], 256, 'conv_3_3')
 
-            pool_2, pool_2_argmax = self.pool_layer(conv_2_2)
+        pool_3, pool_3_argmax = self.pool_layer(conv_3_1)
 
-            conv_3_1 = self.conv_layer(pool_2, [3, 3, 128, 256], 256, 'conv_3_1')
-            conv_3_2 = self.conv_layer(conv_3_1, [3, 3, 256, 256], 256, 'conv_3_2')
-            conv_3_3 = self.conv_layer(conv_3_2, [3, 3, 256, 256], 256, 'conv_3_3')
+        conv_4_1 = self.conv_layer(pool_3, [3, 3, 256, 512], 512, 'conv_4_1')
+        #conv_4_2 = self.conv_layer(conv_4_1, [3, 3, 512, 512], 512, 'conv_4_2')
+        #conv_4_3 = self.conv_layer(conv_4_2, [3, 3, 512, 512], 512, 'conv_4_3')
 
-            pool_3, pool_3_argmax = self.pool_layer(conv_3_3)
+        pool_4, pool_4_argmax = self.pool_layer(conv_4_1)
 
-            conv_4_1 = self.conv_layer(pool_3, [3, 3, 256, 512], 512, 'conv_4_1')
-            conv_4_2 = self.conv_layer(conv_4_1, [3, 3, 512, 512], 512, 'conv_4_2')
-            conv_4_3 = self.conv_layer(conv_4_2, [3, 3, 512, 512], 512, 'conv_4_3')
+        conv_5_1 = self.conv_layer(pool_4, [3, 3, 512, 512], 512, 'conv_5_1')
+        #conv_5_2 = self.conv_layer(conv_5_1, [3, 3, 512, 512], 512, 'conv_5_2')
+        #conv_5_3 = self.conv_layer(conv_5_2, [3, 3, 512, 512], 512, 'conv_5_3')
 
-            pool_4, pool_4_argmax = self.pool_layer(conv_4_3)
+        pool_5, pool_5_argmax = self.pool_layer(conv_5_1)
 
-            conv_5_1 = self.conv_layer(pool_4, [3, 3, 512, 512], 512, 'conv_5_1')
-            conv_5_2 = self.conv_layer(conv_5_1, [3, 3, 512, 512], 512, 'conv_5_2')
-            conv_5_3 = self.conv_layer(conv_5_2, [3, 3, 512, 512], 512, 'conv_5_3')
+        fc_6 = self.conv_layer(pool_5, [7, 7, 512, 4096], 4096, 'fc_6')
+        fc_7 = self.conv_layer(fc_6, [1, 1, 4096, 4096], 4096, 'fc_7')
 
-            pool_5, pool_5_argmax = self.pool_layer(conv_5_3)
+        deconv_fc_6 = self.deconv_layer(fc_7, [7, 7, 512, 4096], 512, 'fc6_deconv')
 
-            fc_6 = self.conv_layer(pool_5, [7, 7, 512, 4096], 4096, 'fc_6')
-            fc_7 = self.conv_layer(fc_6, [1, 1, 4096, 4096], 4096, 'fc_7')
+        unpool_5 = self.unpool_layer2x2_batch(deconv_fc_6, pool_5_argmax, tf.shape(conv_5_1))
 
-            deconv_fc_6 = self.deconv_layer(fc_7, [7, 7, 512, 4096], 512, 'fc6_deconv')
+        #deconv_5_3 = self.deconv_layer(unpool_5, [3, 3, 512, 512], 512, 'deconv_5_3')
+        #deconv_5_2 = self.deconv_layer(deconv_5_3, [3, 3, 512, 512], 512, 'deconv_5_2')
+        deconv_5_1 = self.deconv_layer(unpool_5, [3, 3, 512, 512], 512, 'deconv_5_1')
 
-            unpool_5 = self.unpool_layer2x2_batch(deconv_fc_6, pool_5_argmax, tf.shape(conv_5_3))
+        unpool_4 = self.unpool_layer2x2_batch(deconv_5_1, pool_4_argmax, tf.shape(conv_4_1))
 
-            deconv_5_3 = self.deconv_layer(unpool_5, [3, 3, 512, 512], 512, 'deconv_5_3')
-            deconv_5_2 = self.deconv_layer(deconv_5_3, [3, 3, 512, 512], 512, 'deconv_5_2')
-            deconv_5_1 = self.deconv_layer(deconv_5_2, [3, 3, 512, 512], 512, 'deconv_5_1')
+        #deconv_4_3 = self.deconv_layer(unpool_4, [3, 3, 512, 512], 512, 'deconv_4_3')
+        #deconv_4_2 = self.deconv_layer(deconv_4_3, [3, 3, 512, 512], 512, 'deconv_4_2')
+        deconv_4_1 = self.deconv_layer(unpool_4, [3, 3, 256, 512], 256, 'deconv_4_1')
 
-            unpool_4 = self.unpool_layer2x2_batch(deconv_5_1, pool_4_argmax, tf.shape(conv_4_3))
+        unpool_3 = self.unpool_layer2x2_batch(deconv_4_1, pool_3_argmax, tf.shape(conv_3_1))
 
-            deconv_4_3 = self.deconv_layer(unpool_4, [3, 3, 512, 512], 512, 'deconv_4_3')
-            deconv_4_2 = self.deconv_layer(deconv_4_3, [3, 3, 512, 512], 512, 'deconv_4_2')
-            deconv_4_1 = self.deconv_layer(deconv_4_2, [3, 3, 256, 512], 256, 'deconv_4_1')
+        #deconv_3_3 = self.deconv_layer(unpool_3, [3, 3, 256, 256], 256, 'deconv_3_3')
+        #deconv_3_2 = self.deconv_layer(deconv_3_3, [3, 3, 256, 256], 256, 'deconv_3_2')
+        deconv_3_1 = self.deconv_layer(unpool_3, [3, 3, 128, 256], 128, 'deconv_3_1')
 
-            unpool_3 = self.unpool_layer2x2_batch(deconv_4_1, pool_3_argmax, tf.shape(conv_3_3))
+        unpool_2 = self.unpool_layer2x2_batch(deconv_3_1, pool_2_argmax, tf.shape(conv_2_1))
 
-            deconv_3_3 = self.deconv_layer(unpool_3, [3, 3, 256, 256], 256, 'deconv_3_3')
-            deconv_3_2 = self.deconv_layer(deconv_3_3, [3, 3, 256, 256], 256, 'deconv_3_2')
-            deconv_3_1 = self.deconv_layer(deconv_3_2, [3, 3, 128, 256], 128, 'deconv_3_1')
+        #deconv_2_2 = self.deconv_layer(unpool_2, [3, 3, 128, 128], 128, 'deconv_2_2')
+        deconv_2_1 = self.deconv_layer(unpool_2, [3, 3, 64, 128], 64, 'deconv_2_1')
 
-            unpool_2 = self.unpool_layer2x2_batch(deconv_3_1, pool_2_argmax, tf.shape(conv_2_2))
+        unpool_1 = self.unpool_layer2x2_batch(deconv_2_1, pool_1_argmax, tf.shape(conv_1_1))
 
-            deconv_2_2 = self.deconv_layer(unpool_2, [3, 3, 128, 128], 128, 'deconv_2_2')
-            deconv_2_1 = self.deconv_layer(deconv_2_2, [3, 3, 64, 128], 64, 'deconv_2_1')
+        #deconv_1_2 = self.deconv_layer(unpool_1, [3, 3, 64, 64], 64, 'deconv_1_2')
+        deconv_1_1 = self.deconv_layer(unpool_1, [3, 3, 32, 64], 32, 'deconv_1_1')
 
-            unpool_1 = self.unpool_layer2x2_batch(deconv_2_1, pool_1_argmax, tf.shape(conv_1_2))
+        score_1 = self.deconv_layer(deconv_1_1, [1, 1, 256, 32], 256, 'score_1')
 
-            deconv_1_2 = self.deconv_layer(unpool_1, [3, 3, 64, 64], 64, 'deconv_1_2')
-            deconv_1_1 = self.deconv_layer(deconv_1_2, [3, 3, 32, 64], 32, 'deconv_1_1')
-
-            score_1 = self.deconv_layer(deconv_1_1, [1, 1, 21, 32], 21, 'score_1')
-
-            self.logits = tf.reshape(score_1, (-1, 21))
+        self.logits = tf.reshape(score_1, (-1, 256))
 
             #cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(logits, tf.cast(tf.reshape(self.y, [-1]), tf.int64), name='x_entropy')
             #loss = tf.reduce_mean(cross_entropy, name='x_entropy_mean')
@@ -259,69 +240,16 @@ class DeconvNet:
         delta = tf.SparseTensor(indices, values, tf.to_int64(out_shape))
         return tf.sparse_tensor_to_dense(tf.sparse_reorder(delta))
 
-if __name__ == '__main__':
+def main():
 
-    # Using argparse over tf.FLAGS as I find they behave better in ipython
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--train_record', help="training tfrecord file", default="tfrecords/pascalvoc2012.tfrecords")
-    parser.add_argument('--train_dir', help="where to log training", default="train_log")
-    parser.add_argument('--batch_size', help="batch size", type=int, default=10)
-    parser.add_argument('--num_epochs', help="number of epochs.", type=int, default=50)
-    parser.add_argument('--lr',help="learning rate",type=float, default=1e-6)
-    args = parser.parse_args()
+    batch_size=2
+    with tf.device('/cpu:0'):
+        encode_to_tfrecords("../data/oriimage.txt","../data",'data.tfrecords',(224,224))
+        image,label=decode_from_tfrecords('../data/data.tfrecords')
+        trn_images_batch,trn_segmentations_batch=get_batch(image,label,batch_size,[224,224,1])#batch 生成测试
+        trn_images_batch=tf.cast(trn_images_batch, tf.float32)
+        trn_segmentations_batch=tf.cast(trn_segmentations_batch, tf.int32)
 
-    def read_and_decode(filename_queue):
-        reader = tf.TFRecordReader()
-        _, serialized_example = reader.read(filename_queue)
-        features = tf.parse_single_example(
-            serialized_example,
-            # Defaults are not specified since both keys are required.
-            features={
-                'image_raw': tf.FixedLenFeature([], tf.string),
-                'mask_raw': tf.FixedLenFeature([], tf.string),
-            }
-        )
-
-        # must be read back as uint8 here
-        image = tf.decode_raw(features['image_raw'], tf.uint8)
-        segmentation = tf.decode_raw(features['mask_raw'], tf.uint8)
-
-        image.set_shape([224*224*3])
-        segmentation.set_shape([224*224*1])
-
-        image = tf.reshape(image,[224,224,3])
-        segmentation = tf.reshape(segmentation,[224,224])
-
-        rgb = tf.cast(image, tf.float32)
-        rgb = rgb * (1./255)
-        rgb = tf.cast(image, tf.float32)
-
-        mask = tf.cast(segmentation, tf.float32)
-        mask = (mask / 255.) * 20
-        mask = tf.cast(mask, tf.int64)
-        
-        return rgb, mask
-
-    def input_pipeline(filenames, batch_size, num_epochs):
-        filename_queue = tf.train.string_input_producer(
-            [filenames], num_epochs=num_epochs,shuffle=False)
-
-        image, label = read_and_decode(filename_queue)
-
-        min_after_dequeue = 1000
-        capacity = min_after_dequeue + 3 * batch_size
-        images_batch, labels_batch = tf.train.shuffle_batch(
-            [image, label], batch_size=batch_size,
-            enqueue_many=False, shapes=None,
-            allow_smaller_final_batch=True,
-            capacity=capacity,
-            min_after_dequeue=min_after_dequeue)
-        return images_batch, labels_batch
-
-    trn_images_batch, trn_segmentations_batch = input_pipeline(
-                                                    args.train_record,
-                                                    args.batch_size,
-                                                    args.num_epochs)
 
     deconvnet = DeconvNet(trn_images_batch, trn_segmentations_batch, use_cpu=False)
 
@@ -332,20 +260,20 @@ if __name__ == '__main__':
     
     loss_mean=tf.reduce_mean(cross_entropy, name='x_entropy_mean')
 
-    train_step=tf.train.AdamOptimizer(args.lr).minimize(loss_mean)
+    train_step=tf.train.AdamOptimizer(0.01).minimize(loss_mean)
 
     init = tf.initialize_all_variables()
     init_locals = tf.initialize_local_variables()
 
     config = tf.ConfigProto(allow_soft_placement = True)
-    with tf.Session(config=config) as sess:
+    with tf.Session() as sess:
 
         sess.run([init, init_locals])
         
         coord = tf.train.Coordinator()
         threads = tf.train.start_queue_runners(coord=coord)
 
-        summary_writer = tf.train.SummaryWriter(args.train_dir, sess.graph)
+        summary_writer = tf.train.SummaryWriter("../train_log", sess.graph)
         training_summary = tf.scalar_summary("loss", loss_mean)
         
         try:
@@ -362,7 +290,7 @@ if __name__ == '__main__':
                 step+=1
 
                 if step % 1 == 0:
-                    num_examples_per_step = args.batch_size
+                    num_examples_per_step = batch_size
                     examples_per_sec = num_examples_per_step / elapsed
                     sec_per_batch = float(elapsed)
 
@@ -377,3 +305,4 @@ if __name__ == '__main__':
         finally:
             coord.request_stop()
             coord.join(threads)
+main()
