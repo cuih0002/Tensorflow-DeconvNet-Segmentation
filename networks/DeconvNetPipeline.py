@@ -244,7 +244,7 @@ def main():
 
     batch_size=2
     with tf.device('/cpu:0'):
-        encode_to_tfrecords("../data/oriimage.txt","../data",'data.tfrecords',(224,224))
+        #encode_to_tfrecords("../data/oriimage.txt","../data",'data.tfrecords',(224,224))
         image,label=decode_from_tfrecords('../data/data.tfrecords')
         trn_images_batch,trn_segmentations_batch=get_batch(image,label,batch_size,[224,224,1])#batch 生成测试
         trn_images_batch=tf.cast(trn_images_batch, tf.float32)
@@ -260,7 +260,7 @@ def main():
     
     loss_mean=tf.reduce_mean(cross_entropy, name='x_entropy_mean')
 
-    train_step=tf.train.AdamOptimizer(0.01).minimize(loss_mean)
+    train_step=tf.train.AdamOptimizer(0.0002).minimize(loss_mean)
 
     init = tf.initialize_all_variables()
     init_locals = tf.initialize_local_variables()
